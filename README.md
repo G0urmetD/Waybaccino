@@ -84,7 +84,7 @@ python3 waybaccino.py -sT example.com -p
 ```
 
 ## Parameters
-The parameters are hardcoded in the code. These can be customised as required.
+The parameters are hardcoded. These can be customised as required.
 
 ```python3
 # Hard-coded list of parameters to filter by if -p/--params is set:
