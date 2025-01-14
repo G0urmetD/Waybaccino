@@ -2,6 +2,7 @@
 
 import os
 import sys
+import urllib3
 import argparse
 import requests
 import datetime
@@ -14,21 +15,21 @@ ALLOWED_PARAMS = [
     '?categoryid=', '?key=', '?login=', '?begindate=', '?enddate='
 ]
 
+# Disable the InsecureRequestWarning that appears when using verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def fetch_wayback_urls(domain, output_file=None, years=None, chunk_size=5000, param_filter=False):
+def fetch_wayback_urls(domain, years=None, chunk_size=5000, param_filter=False):
     """
     Fetch archived URLs from the Wayback Machine (CDX API) for a given domain,
     with optional pagination, optional time filtering, and optional parameter filtering.
 
-    :param domain:       Domain to query (e.g., "example.com")
-    :param output_file:  Name of the output file (or None to print to STDOUT)
-    :param years:        Number of years for time-based filtering (int) or None
-    :param chunk_size:   Number of results fetched per request (default: 5000)
-    :param param_filter: If True, only output URLs containing a parameter from ALLOWED_PARAMS
-    """
-    base_url = "http://web.archive.org/cdx/search/cdx"
+    PHASE 1: We do NOT use a proxy here, so we don't get blocked by Burp.
 
-    # Build the base query (URL, output format, fields, collapsing duplicates)
+    Returns:
+        A list of URLs (strings).
+    """
+     # Build the base query (URL, output format, fields, collapsing duplicates)
+    base_url = "http://web.archive.org/cdx/search/cdx"
     cdx_base_api_url = (
         f"{base_url}?url={domain}/*"
         "&output=json"
@@ -43,15 +44,11 @@ def fetch_wayback_urls(domain, output_file=None, years=None, chunk_size=5000, pa
         to_year = current_year
         cdx_base_api_url += f"&from={from_year}&to={to_year}"
 
+    all_filtered_urls = []
     offset = 0
-    total_urls_fetched = 0  # Count of actually output URLs
+
     while True:
-        # Construct the paginated URL
-        cdx_api_url = (
-            f"{cdx_base_api_url}"
-            f"&limit={chunk_size}"
-            f"&offset={offset}"
-        )
+        cdx_api_url = f"{cdx_base_api_url}&limit={chunk_size}&offset={offset}" # Construct the paginated URL
 
         try:
             # Increased timeout to 120s for large queries
@@ -60,112 +57,67 @@ def fetch_wayback_urls(domain, output_file=None, years=None, chunk_size=5000, pa
             data = response.json()
         except requests.exceptions.RequestException as e:
             print(f"[!] Error fetching domain '{domain}' at offset {offset}: {e}", file=sys.stderr)
-            break  # Stop fetching on error
+            break # Stop fetching on error
 
         # The first element is usually the header (e.g. ["original"])
-        # so skip it to get the actual URL entries
         raw_urls = data[1:] if len(data) > 1 else []
-
-        # If the chunk is empty, we've reached the end
         if not raw_urls:
+            # No more data
             break
 
-        # Convert from list of lists -> list of strings
-        chunk_urls = [item[0] for item in raw_urls]
+        chunk_urls = [item[0] for item in raw_urls] # Convert from list of lists -> list of strings
 
         # Optional parameter filtering
         if param_filter:
-            filtered_chunk = [
+            chunk_urls = [
                 url for url in chunk_urls
                 if any(param in url for param in ALLOWED_PARAMS)
             ]
-        else:
-            filtered_chunk = chunk_urls
 
-        # Count how many URLs we actually keep
-        chunk_count = len(filtered_chunk)
+        all_filtered_urls.extend(chunk_urls)
 
-        # Print or write the filtered URLs
-        if output_file:
-            with open(output_file, "a", encoding="utf-8") as f:
-                for url in filtered_chunk:
-                    f.write(url + "\n")
-        else:
-            for url in filtered_chunk:
-                print(url)
-
-        # Increase total fetched by how many we just wrote
-        total_urls_fetched += chunk_count
-
-        # If the unfiltered chunk was smaller than 'chunk_size', we are at the end
-        if len(chunk_urls) < chunk_size:
+        if len(raw_urls) < chunk_size:
             break
 
-        # Otherwise, increase offset for the next iteration
         offset += chunk_size
 
-    # Finally, print how many URLs were output
-    print(f"    [*] Total URLs fetched (after filtering): {total_urls_fetched}")
+    return all_filtered_urls
+
+
+def get_urls_through_proxy(urls, proxy):
+    """
+    Phase 2: Sends all URLs via GET request via the specified proxy,
+    but only shows a simple progress bar in the terminal.
+    """
+    proxies = {"http": proxy, "https": proxy}
+    total = len(urls)
+    total_ok = 0
+
+    for i, url in enumerate(urls, start=1):
+        print(f"\r    [*] Proxying {i}/{total}...", end="", flush=True)
+
+        try:
+            r = requests.get(url, proxies=proxies, timeout=10, verify=False)
+            total_ok += 1
+        except Exception:
+            pass
+
+    print(f"\n    [*] Finished proxy requests. Successful: {total_ok} / {total}")
 
 
 def main():
-    """Parse arguments and handle single or multiple domain targets."""
     parser = argparse.ArgumentParser(
         description="Waybaccino: A Python tool to fetch archived URLs "
                     "from the Wayback Machine (CDX API) with pagination "
                     "and optional query parameter filtering."
     )
-
-    parser.add_argument(
-        "-sT",
-        "--single-target",
-        help="Query a single domain (e.g., 'example.com').",
-        type=str,
-        dest="single_target",
-        required=False
-    )
-    parser.add_argument(
-        "-mT",
-        "--multiple-targets",
-        help="Path to a text file containing multiple domains (one per line).",
-        type=str,
-        dest="multiple_targets",
-        required=False
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        help="Path to an optional output file. (If not set, results are printed to STDOUT.)",
-        type=str,
-        dest="output_file",
-        required=False
-    )
-    parser.add_argument(
-        "-t",
-        "--time",
-        help="Optional number of years to filter results (e.g. 2 for last 2 years).",
-        type=int,
-        dest="years",
-        required=False,
-        default=None
-    )
-    parser.add_argument(
-        "-c",
-        "--chunk-size",
-        help="Number of results per request (default: 5000). Lower it if you get timeouts.",
-        type=int,
-        dest="chunk_size",
-        required=False,
-        default=5000
-    )
-    parser.add_argument(
-        "-p",
-        "--params",
-        help="Only output URLs that contain at least one known query parameter.",
-        action="store_true",
-        dest="param_filter",
-        required=False
-    )
+    parser.add_argument("-sT", "--single-target", type=str, dest="single_target", required=False)
+    parser.add_argument("-mT", "--multiple-targets", type=str, dest="multiple_targets", required=False)
+    parser.add_argument("-o", "--output", type=str, dest="output_file", required=False)
+    parser.add_argument("-t", "--time", type=int, dest="years", required=False, default=None)
+    parser.add_argument("-c", "--chunk-size", type=int, dest="chunk_size", required=False, default=5000)
+    parser.add_argument("-p", "--params", action="store_true", dest="param_filter", required=False)
+    parser.add_argument("-bp","--burp-proxy", type=str, dest="burp_proxy", required=False, default=None)
 
     args = parser.parse_args()
 
@@ -179,44 +131,68 @@ def main():
     if args.single_target:
         domain = args.single_target.strip()
         print(f"[+] Fetching archived URLs for: {domain}")
+
         if args.years:
             print(f"    [*] Filtering for last {args.years} year(s)")
         if args.param_filter:
             print(f"    [*] Only URLs with known query parameters")
 
-        fetch_wayback_urls(
-            domain,
-            output_file=args.output_file,
+        urls = fetch_wayback_urls(
+            domain=domain,
             years=args.years,
             chunk_size=args.chunk_size,
             param_filter=args.param_filter
         )
+        print(f"    [*] Total URLs collected: {len(urls)}")
+
+        if args.output_file:
+            with open(args.output_file, "a", encoding="utf-8") as f:
+                for u in urls:
+                    f.write(u + "\n")
+        else:
+            for u in urls:
+                print(u)
+
+        # Optional Phase 2
+        if args.burp_proxy:
+            print(f"    [*] Sending GET requests to each URL via proxy: {args.burp_proxy}")
+            get_urls_through_proxy(urls, args.burp_proxy)
 
     # Multiple targets
     if args.multiple_targets:
         input_file = args.multiple_targets.strip()
-
-        # Check if the file exists
         if not os.path.exists(input_file):
             sys.exit(f"[!] The file '{input_file}' does not exist.")
 
         with open(input_file, "r", encoding="utf-8") as f:
-            for line in f:
-                domain = line.strip()
-                if domain:
-                    print(f"[+] Fetching archived URLs for: {domain}")
-                    if args.years:
-                        print(f"    [*] Filtering for last {args.years} year(s)")
-                    if args.param_filter:
-                        print(f"    [*] Only URLs with known query parameters")
+            domains = [line.strip() for line in f if line.strip()]
 
-                    fetch_wayback_urls(
-                        domain,
-                        output_file=args.output_file,
-                        years=args.years,
-                        chunk_size=args.chunk_size,
-                        param_filter=args.param_filter
-                    )
+        for domain in domains:
+            print(f"[+] Fetching archived URLs for: {domain}")
+            if args.years:
+                print(f"    [*] Filtering for last {args.years} year(s)")
+            if args.param_filter:
+                print(f"    [*] Only URLs with known query parameters")
+
+            urls = fetch_wayback_urls(
+                domain=domain,
+                years=args.years,
+                chunk_size=args.chunk_size,
+                param_filter=args.param_filter
+            )
+            print(f"    [*] Total URLs collected: {len(urls)}")
+
+            if args.output_file:
+                with open(args.output_file, "a", encoding="utf-8") as out_f:
+                    for u in urls:
+                        out_f.write(u + "\n")
+            else:
+                for u in urls:
+                    print(u)
+
+            if args.burp_proxy:
+                print(f"    [*] Sending GET requests to each URL via proxy: {args.burp_proxy}")
+                get_urls_through_proxy(urls, args.burp_proxy)
 
 
 if __name__ == "__main__":
