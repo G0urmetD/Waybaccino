@@ -111,13 +111,13 @@ def main():
                     "from the Wayback Machine (CDX API) with pagination "
                     "and optional query parameter filtering."
     )
-    parser.add_argument("-sT", "--single-target", type=str, dest="single_target", required=False)
-    parser.add_argument("-mT", "--multiple-targets", type=str, dest="multiple_targets", required=False)
-    parser.add_argument("-o", "--output", type=str, dest="output_file", required=False)
-    parser.add_argument("-t", "--time", type=int, dest="years", required=False, default=None)
-    parser.add_argument("-c", "--chunk-size", type=int, dest="chunk_size", required=False, default=5000)
-    parser.add_argument("-p", "--params", action="store_true", dest="param_filter", required=False)
-    parser.add_argument("-bp","--burp-proxy", type=str, dest="burp_proxy", required=False, default=None)
+    parser.add_argument("-sT", "--single-target", type=str, dest="single_target", required=False, help="Query a single domain (e.g., 'example.com').")
+    parser.add_argument("-mT", "--multiple-targets", type=str, dest="multiple_targets", required=False, help="Path to a text file containing multiple domains (one per line).")
+    parser.add_argument("-o", "--output", type=str, dest="output_file", required=False, help="Path to an optional output file. (If not set, results are printed to STDOUT.)")
+    parser.add_argument("-t", "--time", type=int, dest="years", required=False, default=None, help="Optional number of years to filter results (e.g. 2 for last 2 years).")
+    parser.add_argument("-c", "--chunk-size", type=int, dest="chunk_size", required=False, default=5000, help="Number of results per request (default: 5000). Lower it if you get timeouts.")
+    parser.add_argument("-p", "--params", action="store_true", dest="param_filter", required=False, help="Only output URLs that contain at least one known query parameter.")
+    parser.add_argument("-bp","--burp-proxy", type=str, dest="burp_proxy", required=False, default=None, help="Send traffic to burp suite proxy.")
 
     args = parser.parse_args()
 
