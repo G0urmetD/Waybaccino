@@ -27,6 +27,7 @@ git clone https://github.com/G0urmetD/Waybaccino.git
 # install the dependencies
 os
 sys
+urllib3
 argparse
 requests
 datetime
